@@ -28,7 +28,7 @@ DVRouting::DVRouting()
 }
 
 
-int DVRouting::enlqueue(RoutInfoManagLq* q, Info x)
+int DVRouting::enllist(RoutInfoManagLL* q, Info x)
 {
 	InfoNodeType  *s = new InfoNodeType;
 	if (s != NULL)
@@ -44,49 +44,85 @@ int DVRouting::enlqueue(RoutInfoManagLq* q, Info x)
 }
 
 
-int DVRouting::delqueue(RoutInfoManagLq* q, Info* x)
+int DVRouting::dellist(RoutInfoManagLL* q, char cond_id[])
 {
-	InfoNodeType  *p;
-	if (q->front->next == NULL)
-		return -1;
+	boolean findflag = false;
+	InfoNodeType* x = q->front->next;
+	InfoNodeType* y = q->front;
+
+	while (x != NULL)
+	{
+		if (strcmp(x->info.ID, cond_id))
+		{
+			findflag = true;
+			break;
+		}
+		y = x;
+		x = x->next;
+	}
+	if (!findflag) return -1;
 	else
 	{
-		p = q->front->next;   // get front node
-		*x = p->info;			// get element
-		q->front->next = p->next; // update front pointer
-		if (p->next == NULL)    // if length of queue equals to one
-			q->rear = q->front; // update rear pointer
-		delete p;		       // free the node
+		y->next = x->next; // update front pointer
+		if (x->next == NULL) q->rear = q->front;
+		delete x;		       // free the node
 		return 0;
 	}
+
 }
 
-int DVRouting::checklqueue(RoutInfoManagLq* q, Info* x)
-{
-	InfoNodeType  *p;
-	if (q->front->next == NULL)
-		return -1;
-	else
-	{
-		p = q->front->next;   // get front node
-		*x = p->info;			// get element
-		return 0;
-	}
-}
 
-DVRouting::Info DVRouting::lookuplqueue(RoutInfoManagLq* q, char cond_id[])
+DVRouting::Info* DVRouting::lookupllist(RoutInfoManagLL* q, char cond_id[])
 {
-
+	boolean findflag = false;
 	InfoNodeType* x = q->front->next;
 	while (x != NULL)
 	{
 		if (strcmp(x->info.ID, cond_id))
 		{
+			findflag = true;
 			break;
 		}
 		x = x->next;
 	}
-	return x->info;
+	if (!findflag) return NULL;
+	else return &(x->info);
+}
+
+int DVRouting::enRouter_table(RoutingTable* routing_table, RoutingInfo entry)
+{
+	if (routing_table->entry_count >= MaxnumOfRouter) return -1;
+	else
+	{
+		routing_table->RInfo[routing_table->entry_count] = entry;
+		routing_table->entry_count += 1;
+		return 0;
+	}
+}
+
+int DVRouting::deRouter_table(RoutingTable* routing_table, char cond_DestRID[])
+{
+	int i, j;
+	boolean findflag = false;
+	for (i = 0; i < routing_table->entry_count; i++)
+	{
+		if (strcmp(routing_table->RInfo[i].DestRID, cond_DestRID) == 0)
+		{
+			findflag = true;
+			break;
+		}
+	}
+
+	if (!findflag) return -1;
+	else
+	{
+		for (j = i; j < routing_table->entry_count - 1; j++)
+		{
+			routing_table->RInfo[j] = routing_table->RInfo[j + 1];
+		}
+		routing_table->entry_count -= 1;
+		return 0;
+	}
 }
 
 int DVRouting::lookupRouter_table(RoutingTable routing_table, char cond_DestRID[])
@@ -102,19 +138,37 @@ int DVRouting::lookupRouter_table(RoutingTable routing_table, char cond_DestRID[
 	return 0;
 }
 
+DVRouting::RoutingInfo DVRouting::makeRoutingInfo(char SourRID[], char DestRID[], int cost, int numOfHops, char nextRID[])
+{
+	RoutingInfo routing_info;
+	memcpy(routing_info.SourRID, SourRID, sizeof(SourRID));
+	memcpy(routing_info.DestRID, DestRID, sizeof(DestRID));
+	routing_info.cost = cost;
+	routing_info.numOfHops = numOfHops;
+	memcpy(routing_info.nextRID, nextRID, sizeof(nextRID));
+	return routing_info;
+}
+
 DWORD WINAPI DVRouting::router_proc(thread_arg* my_arg)
 {
-	int time_start, i;
-	routerMsg* recv_router_msg;
-	routerMsg* send_router_msg;
+	int time_start = clock(), i, index, index2, retval;
+	routerMsg* recv_router_msg = new routerMsg;
+	routerMsg* send_router_msg = new routerMsg;
 	RoutingTable routing_table;
+	RoutingInfo routing_info;
+	routing_table.entry_count = 0;
 	
+	// initialize router
 	my_arg->info->sock = my_arg->ptr->init_router(my_arg->info);
-	enlqueue(&rout_info_manag, *(my_arg->info)); // add new router into management queue
+	enllist(&rout_info_manag, *(my_arg->info)); // add new router into management queue
 	cout << "active" << endl;
 
+	//initialize routing table
+	routing_info = makeRoutingInfo(my_arg->info->ID, my_arg->info->ID, 0, 0, my_arg->info->ID);
+	my_arg->ptr->enRouter_table(&routing_table, routing_info);
+
+
 	// select
-	int retval, len;
 	fd_set readfds;
 	unsigned long mode = 1;// set nonblocking mode
 	const timeval blocking_time{ 0, 100000 };
@@ -154,28 +208,101 @@ DWORD WINAPI DVRouting::router_proc(thread_arg* my_arg)
 			if (my_arg->ptr->recvRouterMsg(my_arg->info->sock, recv_router_msg) != -1)
 			{
 				// run Bellman-Ford algorithm
-				for (i = 0; i < recv_router_msg->msg_count; i++)
+				if (recv_router_msg->msg_count > 0)
 				{
-					int index = lookupRouter_table(routing_table, recv_router_msg->RInfo[i].DestRID);
-					int index2 = lookupRouter_table(routing_table, recv_router_msg->RInfo[i].SourRID);
+					// update routing_table
+					// update routing info with neighbors if allowed
+					index2 = lookupRouter_table(routing_table, recv_router_msg->RInfo[0].SourRID);
 
-					if (recv_router_msg->RInfo[i].cost + routing_table.RInfo[index2].cost < \
-						routing_table.RInfo[index].cost)
+					for (i = 0; i < recv_router_msg->msg_count; i++)
 					{
-						// update routing_table
-						routing_table.RInfo[index].cost = recv_router_msg->RInfo[i].cost + \
-							routing_table.RInfo[index2].cost;
-						memcpy(routing_table.RInfo[index].nextRID, recv_router_msg->RInfo[i].SourRID, sizeof(recv_router_msg->RInfo[i].SourRID));
-						routing_table.RInfo[index].numOfHops = routing_table.RInfo[index2].numOfHops + 1;
+						if (recv_router_msg->RInfo[i].DestRID == my_arg->info->ID)
+						{
+							if (index2 == -1)
+							{
+								routing_info = makeRoutingInfo(my_arg->info->ID, recv_router_msg->RInfo[i].SourRID, \
+									recv_router_msg->RInfo[i].cost, recv_router_msg->RInfo[i].numOfHops, \
+									recv_router_msg->RInfo[i].SourRID);
 
+								retval = my_arg->ptr->enRouter_table(&routing_table, routing_info);
+								if (retval == -1)
+								{
+									#ifdef DEBUG
+									cout << "routing table is full ! exit..." << endl;
+									exit(0);
+									#endif
+									return -1;
+								}
+							}
+							else
+							{
+								routing_table.RInfo[index2].cost = recv_router_msg->RInfo[i].cost;
+								routing_table.RInfo[index2].numOfHops = recv_router_msg->RInfo[i].numOfHops;
+							}
+							break;
+						}
 					}
+
 					
+					index2 = lookupRouter_table(routing_table, recv_router_msg->RInfo[0].SourRID);
+					if (index2 == -1)
+					{
+						#ifdef DEBUG
+						cout << "routing error ! exit..." << endl;
+						exit(0);
+						#endif
+						return -1;
+					}
+
+					// update other routing info
+					for (i = 0; i < recv_router_msg->msg_count; i++)
+					{
+						int index = lookupRouter_table(routing_table, recv_router_msg->RInfo[i].DestRID);
+
+						if (index == -1)
+						{
+							// update routing_table
+							routing_info = makeRoutingInfo(my_arg->info->ID, recv_router_msg->RInfo[i].DestRID, \
+								recv_router_msg->RInfo[i].cost + routing_table.RInfo[index2].cost, \
+								recv_router_msg->RInfo[i].numOfHops + 1, \
+								recv_router_msg->RInfo[i].SourRID);
+
+							retval = my_arg->ptr->enRouter_table(&routing_table, routing_info);
+							if (retval == -1)
+							{
+								#ifdef DEBUG
+								cout << "routing table is full ! exit..." << endl;
+								exit(0);
+								#endif
+								return -1;
+							}
+						}
+						else
+						{
+							if (recv_router_msg->RInfo[i].cost + routing_table.RInfo[index2].cost < \
+								routing_table.RInfo[index].cost)
+							{
+								// update routing_table
+								routing_table.RInfo[index].cost = recv_router_msg->RInfo[i].cost + \
+									routing_table.RInfo[index2].cost;
+								memcpy(routing_table.RInfo[index].nextRID, recv_router_msg->RInfo[i].SourRID, sizeof(recv_router_msg->RInfo[i].SourRID));
+								routing_table.RInfo[index].numOfHops = routing_table.RInfo[index2].numOfHops + 1;
+							}
+						}
+					}
+				}
+				
+				else
+				{
+					// periodically keep alive
+					// to do...
+
 				}
 
-
-			}
-
+			}	
 		}
+
+	
 		
 		// periodically broadcast advertisement to neighbors
 		if (clock() - time_start > broadcast_timeout)
@@ -192,9 +319,10 @@ DWORD WINAPI DVRouting::router_proc(thread_arg* my_arg)
 
 
 
-
 	}
 
+	delete recv_router_msg;
+	delete send_router_msg;
 	return 0;
 }
 
@@ -212,13 +340,13 @@ DWORD __stdcall startMethodInThread(LPVOID arg)
 int DVRouting::sendRouterMsg(char s_RID[], char d_RID[], routerMsg* rmsg)
 {
 	int retval;
-	Info s_info, d_info;
+	Info *s_info, *d_info;
 	sockaddr remote_addr;
 	int remote_addr_len = sizeof(remote_addr);
-	s_info = lookuplqueue(&rout_info_manag, s_RID);
-	d_info = lookuplqueue(&rout_info_manag, d_RID);
-	getsockname(d_info.sock, &remote_addr, &remote_addr_len); // get remote address
-	retval = sendto(s_info.sock, (char*)rmsg, sizeof(rmsg), 0, &remote_addr, remote_addr_len);
+	s_info = lookupllist(&rout_info_manag, s_RID);
+	d_info = lookupllist(&rout_info_manag, d_RID);
+	getsockname(d_info->sock, &remote_addr, &remote_addr_len); // get remote address
+	retval = sendto(s_info->sock, (char*)rmsg, sizeof(rmsg), 0, &remote_addr, remote_addr_len);
 	if (retval < 0)
 	{
 		#ifdef DEBUG

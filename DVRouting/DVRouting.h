@@ -40,7 +40,7 @@ public:
 private:
 
 	// routers
-	// linked queue
+	// linked list
 	int broadcast_timeout;
 
 	typedef struct node
@@ -54,8 +54,8 @@ private:
 	{
 		InfoNodeType* front;
 		InfoNodeType* rear;
-	}RoutInfoManagLq;
-	RoutInfoManagLq rout_info_manag;
+	}RoutInfoManagLL;
+	RoutInfoManagLL rout_info_manag;
 
 
 	// Routing Info :
@@ -66,6 +66,7 @@ private:
 		int cost;
 		int numOfHops;
 		char nextRID[10];
+		boolean updateflag;
 	}RoutingInfo;
 
 	// Message format
@@ -89,12 +90,14 @@ private:
 
 
 	// function
-	int enlqueue(RoutInfoManagLq* q, Info x);
-	int delqueue(RoutInfoManagLq* q, Info* x);
-	int checklqueue(RoutInfoManagLq* q, Info* x); // check first element
-	Info lookuplqueue(RoutInfoManagLq* q, char cond_id[]); // look up for the specific element
+	int enllist(RoutInfoManagLL* q, Info x);
+	int dellist(RoutInfoManagLL* q, char cond_id[]);
+	Info* lookupllist(RoutInfoManagLL* q, char cond_id[]); // look up for the specific element
 	int sendRouterMsg(char s_RID[], char d_RID[], routerMsg* rmsg);
 	int recvRouterMsg(SOCKET sock, routerMsg* rmsg);
 	SOCKET init_router(Info* info);
+	int enRouter_table(RoutingTable* routing_table, RoutingInfo entry);
+	int deRouter_table(RoutingTable* routing_table, char cond_DestRID[]);
 	int lookupRouter_table(RoutingTable routing_table, char cond_DestRID[]);
+	RoutingInfo makeRoutingInfo(char SourRID[], char DestRID[], int cost, int numOfHops, char nextRID[]);
 };
