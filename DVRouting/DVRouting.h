@@ -6,10 +6,12 @@ class DVRouting
 {
 public:
 	#define MaxnumOfRouter 10
+	#define POISONMETRIC 255
 	typedef struct
 	{
 		char LinkToID[10];
 		int cost;
+		int keepalive_time; // for keep alive purpose
 	}LinkInfo;
 
 	typedef struct // element type
@@ -18,7 +20,7 @@ public:
 		char hostname[16];
 		int portnum;
 		SOCKET sock; // sock-RID mapping
-		boolean life_state;
+		bool life_state;
 		LinkInfo link_info[MaxnumOfRouter];
 		int link_info_count;
 	}Info;
@@ -27,21 +29,30 @@ public:
 	typedef struct
 	{
 		DVRouting* ptr;
-		Info* info;
+		Info info;
 	}thread_arg;
 
 
 	DVRouting();
 	void frontend(void);
-	DWORD WINAPI router_proc(thread_arg* my_arg);
+	DWORD WINAPI router_proc(thread_arg my_arg);
 
 
 
 private:
+	// upating & display flag
+	typedef struct
+	{
+		char update_router_ID[10];
+		char update_link_ID[10];
+	}UpdateFlag;
+	UpdateFlag update_flag;
+	char display_flag[10];
 
 	// routers
 	// linked list
 	int broadcast_timeout;
+	int keepalive_timeout;
 
 	typedef struct node
 	{
@@ -66,13 +77,14 @@ private:
 		int cost;
 		int numOfHops;
 		char nextRID[10];
-		boolean updateflag;
+		bool updateflag;
 	}RoutingInfo;
 
 	// Message format
 	typedef struct
 	{
 		char type;
+		char ID[10];
 		RoutingInfo RInfo[MaxnumOfRouter];
 		int msg_count;
 	}routerMsg;
@@ -100,4 +112,7 @@ private:
 	int deRouter_table(RoutingTable* routing_table, char cond_DestRID[]);
 	int lookupRouter_table(RoutingTable routing_table, char cond_DestRID[]);
 	RoutingInfo makeRoutingInfo(char SourRID[], char DestRID[], int cost, int numOfHops, char nextRID[]);
+	int lookupLinkInfoArray(LinkInfo link_info[], int link_info_count, char cond_link_to_ID[]);
+	int deInfoArray(LinkInfo link_info[], int link_info_count, char cond_link_to_ID[]);
+	int closeAllSocket(RoutInfoManagLL* q);
 };
