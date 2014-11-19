@@ -1,7 +1,7 @@
 // DVRouting.h
 
 #include <stddef.h>
-
+#pragma pack (1)
 class DVRouting
 {
 public:
@@ -10,19 +10,19 @@ public:
 	typedef struct
 	{
 		char LinkToID[10];
-		int cost;
-		int keepalive_time; // for keep alive purpose
+		unsigned int cost;
+		unsigned int keepalive_time; // for keep alive purpose
 	}LinkInfo;
 
 	typedef struct // element type
 	{
 		char ID[10];
 		char hostname[16];
-		int portnum;
+		unsigned int portnum;
 		SOCKET sock; // sock-RID mapping
 		bool life_state;
 		LinkInfo link_info[MaxnumOfRouter];
-		int link_info_count;
+		unsigned int link_info_count;
 	}Info;
 	
 	// thread arg
@@ -51,8 +51,8 @@ private:
 
 	// routers
 	// linked list
-	int broadcast_timeout;
-	int keepalive_timeout;
+	unsigned int broadcast_timeout;
+	unsigned int keepalive_timeout;
 
 	typedef struct node
 	{
@@ -74,8 +74,8 @@ private:
 	{
 		char SourRID[10];
 		char DestRID[10];
-		int cost;
-		int numOfHops;
+		unsigned int cost;
+		unsigned int numOfHops;
 		char nextRID[10];
 		bool updateflag;
 	}RoutingInfo;
@@ -86,14 +86,14 @@ private:
 		char type;
 		char ID[10];
 		RoutingInfo RInfo[MaxnumOfRouter];
-		int msg_count;
+		unsigned int msg_count;
 	}routerMsg;
 
 	// routing table
 	typedef struct
 	{
 		RoutingInfo RInfo[MaxnumOfRouter];
-		int entry_count;
+		unsigned int entry_count;
 	}RoutingTable;
 
 
@@ -111,8 +111,8 @@ private:
 	int enRouter_table(RoutingTable* routing_table, RoutingInfo entry);
 	int deRouter_table(RoutingTable* routing_table, char cond_DestRID[]);
 	int lookupRouter_table(RoutingTable routing_table, char cond_DestRID[]);
-	RoutingInfo makeRoutingInfo(char SourRID[], char DestRID[], int cost, int numOfHops, char nextRID[]);
-	int lookupLinkInfoArray(LinkInfo link_info[], int link_info_count, char cond_link_to_ID[]);
-	int deInfoArray(LinkInfo link_info[], int link_info_count, char cond_link_to_ID[]);
+	RoutingInfo makeRoutingInfo(char SourRID[], char DestRID[], unsigned int cost, unsigned int numOfHops, char nextRID[]);
+	int lookupLinkInfoArray(LinkInfo link_info[], unsigned int link_info_count, char cond_link_to_ID[]);
+	int deInfoArray(LinkInfo link_info[], unsigned int link_info_count, char cond_link_to_ID[]);
 	int closeAllSocket(RoutInfoManagLL* q);
 };

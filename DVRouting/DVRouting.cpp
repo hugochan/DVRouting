@@ -3,6 +3,7 @@
 #include <iostream>
 #include <winsock.h>
 #include <windows.h>
+#include <string.h>
 #include <string>
 #include <conio.h>
 #include <time.h>
@@ -10,6 +11,7 @@
 #include "DVRouting.h"
 
 #pragma comment(lib,"wsock32.lib")
+#pragma pack (1)
 
 
 using namespace std;
@@ -93,7 +95,7 @@ DVRouting::Info* DVRouting::lookupllist(RoutInfoManagLL* q, char cond_id[])
 	else return &(x->info);
 }
 
-int DVRouting::lookupLinkInfoArray(LinkInfo link_info[], int link_info_count, char cond_link_to_ID[])
+int DVRouting::lookupLinkInfoArray(LinkInfo link_info[], unsigned int link_info_count, char cond_link_to_ID[])
 {
 	bool findflag = false;
 	int i;
@@ -109,7 +111,7 @@ int DVRouting::lookupLinkInfoArray(LinkInfo link_info[], int link_info_count, ch
 	else return i;
 }
 
-int DVRouting::deInfoArray(LinkInfo link_info[], int link_info_count, char cond_link_to_ID[])
+int DVRouting::deInfoArray(LinkInfo link_info[], unsigned int link_info_count, char cond_link_to_ID[])
 {
 	int i, j;
 	bool findflag = false;
@@ -186,7 +188,7 @@ int DVRouting::lookupRouter_table(RoutingTable routing_table, char cond_DestRID[
 	else return i;
 }
 
-DVRouting::RoutingInfo DVRouting::makeRoutingInfo(char SourRID[], char DestRID[], int cost, int numOfHops, char nextRID[])
+DVRouting::RoutingInfo DVRouting::makeRoutingInfo(char SourRID[], char DestRID[], unsigned int cost, unsigned int numOfHops, char nextRID[])
 {
 	RoutingInfo routing_info;
 	memcpy(routing_info.SourRID, SourRID, sizeof(SourRID));
@@ -272,10 +274,6 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 			// recv event
 			if (class_ptr->recvRouterMsg(info->sock, recv_router_msg) != -1)
 			{
-				if (strcmp(recv_router_msg->ID, "B") == 0)
-				{
-					i = 0;
-				}
 				// run Bellman-Ford algorithm
 				if (recv_router_msg->msg_count > 0)
 				{
@@ -285,7 +283,7 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 
 					for (i = 0; i < recv_router_msg->msg_count; i++)
 					{
-						if (recv_router_msg->RInfo[i].DestRID == info->ID)
+						if (strcmp(recv_router_msg->RInfo[i].DestRID, info->ID) == 0)
 						{
 							if (index2 == -1)
 							{
@@ -316,10 +314,6 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 
 					
 					index2 = lookupRouter_table(routing_table, recv_router_msg->RInfo[0].SourRID);
-					if (index2 == -1)
-					{
-						;
-					}
 					assert(index2 != -1);
 
 					// update other routing info
@@ -364,10 +358,6 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 
 				// update keepalive time
 				index = lookupLinkInfoArray(info->link_info, info->link_info_count, recv_router_msg->ID);
-				if (index == -1)
-				{
-					;
-				}
 				assert(index != -1);
 				info->link_info[index].keepalive_time = clock();
 			}	
@@ -380,10 +370,6 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 		{	
 			if (info->link_info_count > 0)
 			{
-				if (strcmp(info->ID, "B") == 0)
-				{
-					i = 0;
-				}
 				send_router_msg->type = 0; // default
 				send_router_msg->msg_count = 0;
 				memcpy(send_router_msg->ID, info->ID, sizeof(info->ID));
@@ -432,10 +418,6 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 				routing_table.RInfo[index2].updateflag = true;
 				#else
 				retval = deRouter_table(&routing_table, info->link_info[i].LinkToID);
-				if (retval == -1)
-				{
-					;
-				}
 				assert(retval != -1);
 				#endif
 			}
@@ -515,7 +497,7 @@ int DVRouting::sendRouterMsg(char s_RID[], char d_RID[], routerMsg* rmsg)
 	s_info = lookupllist(&rout_info_manag, s_RID);
 	d_info = lookupllist(&rout_info_manag, d_RID);
 	getsockname(d_info->sock, &remote_addr, &remote_addr_len); // get remote address
-	retval = sendto(s_info->sock, (char*)rmsg, sizeof(rmsg), 0, &remote_addr, remote_addr_len);
+	retval = sendto(s_info->sock, (char*)rmsg, sizeof(*rmsg), 0, &remote_addr, remote_addr_len);
 	if (retval < 0)
 	{
 		#ifdef DEBUG
