@@ -58,7 +58,7 @@ int DVRouting::dellist(RoutInfoManagLL* q, char cond_id[])
 
 	while (x != NULL)
 	{
-		if (strcmp(x->info.ID, cond_id))
+		if (strcmp(x->info.ID, cond_id) == 0)
 		{
 			findflag = true;
 			break;
@@ -70,7 +70,7 @@ int DVRouting::dellist(RoutInfoManagLL* q, char cond_id[])
 	else
 	{
 		y->next = x->next; // update front pointer
-		if (x->next == NULL) q->rear = q->front;
+		if (x->next == NULL) q->rear = y;
 		delete x;		       // free the node
 		return 0;
 	}
@@ -111,11 +111,11 @@ int DVRouting::lookupLinkInfoArray(LinkInfo link_info[], unsigned int link_info_
 	else return i;
 }
 
-int DVRouting::deInfoArray(LinkInfo link_info[], unsigned int link_info_count, char cond_link_to_ID[])
+int DVRouting::deInfoArray(LinkInfo link_info[], unsigned int* link_info_count, char cond_link_to_ID[])
 {
 	int i, j;
 	bool findflag = false;
-	for (i = 0; i < link_info_count; i++)
+	for (i = 0; i < *link_info_count; i++)
 	{
 		if (strcmp(link_info[i].LinkToID, cond_link_to_ID) == 0)
 		{
@@ -127,11 +127,11 @@ int DVRouting::deInfoArray(LinkInfo link_info[], unsigned int link_info_count, c
 	if (!findflag) return -1;
 	else
 	{
-		for (j = i; j < link_info_count - 1; j++)
+		for (j = i; j < *link_info_count - 1; j++)
 		{
 			link_info[j] = link_info[j + 1];
 		}
-		link_info_count -= 1;
+		*link_info_count -= 1;
 		return 0;
 	}
 }
@@ -253,7 +253,7 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 
 
 	while (1)
-	{
+	{	
 		// listen new msgs & update routing table
 		// select
 		FD_SET(info->sock, &readfds);
@@ -314,6 +314,9 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 
 					
 					index2 = lookupRouter_table(routing_table, recv_router_msg->RInfo[0].SourRID);
+					if (index2 == -1) {
+						i = 0;
+					}
 					assert(index2 != -1);
 
 					// update other routing info
@@ -358,6 +361,10 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 
 				// update keepalive time
 				index = lookupLinkInfoArray(info->link_info, info->link_info_count, recv_router_msg->ID);
+				if (index == -1) {
+					i = 0;
+				}
+
 				assert(index != -1);
 				info->link_info[index].keepalive_time = clock();
 			}	
@@ -399,16 +406,6 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 		{
 			if (clock() - info->link_info[i].keepalive_time > keepalive_timeout)
 			{
-				// remove the link
-				if (deInfoArray(info->link_info, info->link_info_count, info->link_info[i].LinkToID) == -1)
-				{
-					#ifdef DEBUG
-					cout << "deInfoArray error! exit..." << endl;
-					closeAllSocket(&rout_info_manag);
-					exit(0);
-					#endif
-					return -1;
-				}
 
 				// update routing table
 				#ifdef _POISONREVERSE
@@ -418,10 +415,39 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 				routing_table.RInfo[index2].updateflag = true;
 				#else
 				retval = deRouter_table(&routing_table, info->link_info[i].LinkToID);
+				if (retval == -1) {
+					i = 0;
+				}
 				assert(retval != -1);
 				#endif
+
+				// remove the link
+				if (deInfoArray(info->link_info, &(info->link_info_count), info->link_info[i].LinkToID) == -1)
+				{
+					#ifdef DEBUG
+					cout << "deInfoArray error! exit..." << endl;
+					closeAllSocket(&rout_info_manag);
+					exit(0);
+					#endif
+					return -1;
+				}
 			}
 
+		}
+
+
+		// kill
+		if (strcmp(kill_flag, info->ID) == 0)
+		{
+			memset(kill_flag, 0, sizeof(kill_flag)); // clear kill_flag
+			closesocket(info->sock);
+			if (dellist(&rout_info_manag, info->ID) == -1)
+			{
+				cout << "kill error! exit..." << endl;
+				closeAllSocket(&rout_info_manag);
+				exit(0);
+			}
+			break;
 		}
 
 		// display routing table
@@ -438,12 +464,17 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 			}
 		}
 
+
+
 		// update flag: add or change
 		if (strcmp(update_flag.update_router_ID, info->ID) == 0)
 		{
 
 			index = lookupRouter_table(routing_table, update_flag.update_link_ID);
 			index2 = lookupLinkInfoArray(info->link_info, info->link_info_count, update_flag.update_link_ID);
+			if (index2 == -1) {
+				i = 0;
+			}
 
 			assert(index2 != -1);
 			if (index == -1) // add
@@ -474,6 +505,7 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 
 	delete recv_router_msg;
 	delete send_router_msg;
+
 	return 0;
 }
 
@@ -496,7 +528,10 @@ int DVRouting::sendRouterMsg(char s_RID[], char d_RID[], routerMsg* rmsg)
 	int remote_addr_len = sizeof(remote_addr);
 	s_info = lookupllist(&rout_info_manag, s_RID);
 	d_info = lookupllist(&rout_info_manag, d_RID);
+	if (d_info == NULL) return -1; // most likely the peer router has been killed
 	getsockname(d_info->sock, &remote_addr, &remote_addr_len); // get remote address
+
+
 	retval = sendto(s_info->sock, (char*)rmsg, sizeof(*rmsg), 0, &remote_addr, remote_addr_len);
 	if (retval < 0)
 	{
@@ -765,12 +800,7 @@ void DVRouting::frontend(void)
 						cout << "kill is not allowed!" << endl;
 						continue;
 					}
-					if (dellist(&rout_info_manag, (*currentR).ID) == -1)
-					{
-						cout << "kill error! exit..." << endl;
-						closeAllSocket(&rout_info_manag);
-						exit(0);
-					}
+					memcpy(kill_flag, (*currentR).ID, sizeof((*currentR).ID));
 					currentR = NULL;
 				}
 				else

@@ -40,14 +40,17 @@ public:
 
 
 private:
-	// upating & display flag
+	// upating & display & kill flag
 	typedef struct
 	{
 		char update_router_ID[10];
 		char update_link_ID[10];
 	}UpdateFlag;
 	UpdateFlag update_flag;
+
 	char display_flag[10];
+
+	char kill_flag[10];
 
 	// routers
 	// linked list
@@ -113,6 +116,6 @@ private:
 	int lookupRouter_table(RoutingTable routing_table, char cond_DestRID[]);
 	RoutingInfo makeRoutingInfo(char SourRID[], char DestRID[], unsigned int cost, unsigned int numOfHops, char nextRID[]);
 	int lookupLinkInfoArray(LinkInfo link_info[], unsigned int link_info_count, char cond_link_to_ID[]);
-	int deInfoArray(LinkInfo link_info[], unsigned int link_info_count, char cond_link_to_ID[]);
+	int deInfoArray(LinkInfo link_info[], unsigned int* link_info_count, char cond_link_to_ID[]);
 	int closeAllSocket(RoutInfoManagLL* q);
 };
