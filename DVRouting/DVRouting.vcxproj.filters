@@ -21,6 +21,9 @@
     <ClCompile Include="DVRouting.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="dvrouter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DVRouting.h">

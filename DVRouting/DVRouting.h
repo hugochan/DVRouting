@@ -11,10 +11,13 @@ public:
 	{
 		char LinkToID[10];
 		unsigned int cost;
+		char hostname[16];
+		unsigned int portnum;
 		unsigned int keepalive_time; // for keep alive purpose
 	}LinkInfo;
 
-	typedef struct // element type
+	// router info
+	typedef struct
 	{
 		char ID[10];
 		char hostname[16];
@@ -24,7 +27,8 @@ public:
 		LinkInfo link_info[MaxnumOfRouter];
 		unsigned int link_info_count;
 	}Info;
-	
+	Info router_info;
+
 	// thread arg
 	typedef struct
 	{
@@ -34,7 +38,7 @@ public:
 
 
 	DVRouting();
-	void frontend(void);
+	void frontend(char ID[], unsigned int portnum);
 	DWORD WINAPI router_proc(thread_arg my_arg);
 
 
@@ -52,25 +56,8 @@ private:
 
 	char kill_flag[10];
 
-	// routers
-	// linked list
 	unsigned int broadcast_timeout;
 	unsigned int keepalive_timeout;
-
-	typedef struct node
-	{
-		Info info;
-		node* next = NULL;
-	}InfoNodeType;
-	InfoNodeType info_node;
-
-	typedef struct
-	{
-		InfoNodeType* front;
-		InfoNodeType* rear;
-	}RoutInfoManagLL;
-	RoutInfoManagLL rout_info_manag;
-
 
 	// Routing Info :
 	typedef struct
@@ -105,11 +92,8 @@ private:
 
 
 	// function
-	int enllist(RoutInfoManagLL* q, Info x);
-	int dellist(RoutInfoManagLL* q, char cond_id[]);
-	Info* lookupllist(RoutInfoManagLL* q, char cond_id[]); // look up for the specific element
-	int sendRouterMsg(char s_RID[], char d_RID[], routerMsg* rmsg);
-	int recvRouterMsg(SOCKET sock, routerMsg* rmsg);
+	int sendRouterMsg(char d_RID[], routerMsg* rmsg);
+	int recvRouterMsg(SOCKET sock, routerMsg* rmsg, sockaddr_in* remote_addr);
 	SOCKET init_router(Info* info);
 	int enRouter_table(RoutingTable* routing_table, RoutingInfo entry);
 	int deRouter_table(RoutingTable* routing_table, char cond_DestRID[]);
@@ -117,5 +101,4 @@ private:
 	RoutingInfo makeRoutingInfo(char SourRID[], char DestRID[], unsigned int cost, unsigned int numOfHops, char nextRID[]);
 	int lookupLinkInfoArray(LinkInfo link_info[], unsigned int link_info_count, char cond_link_to_ID[]);
 	int deInfoArray(LinkInfo link_info[], unsigned int* link_info_count, char cond_link_to_ID[]);
-	int closeAllSocket(RoutInfoManagLL* q);
 };

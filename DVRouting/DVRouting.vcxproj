@@ -79,6 +79,7 @@
     <Text Include="ReadMe.txt" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="dvrouter.cpp" />
     <ClCompile Include="DVRouting.cpp" />
   </ItemGroup>
   <ItemGroup>

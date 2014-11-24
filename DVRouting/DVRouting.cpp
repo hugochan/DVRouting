@@ -2,7 +2,6 @@
 
 #include <iostream>
 #include <winsock.h>
-#include <windows.h>
 #include <string.h>
 #include <string>
 #include <conio.h>
@@ -19,8 +18,8 @@ using namespace std;
 //#define _POISONREVERSE
 
 
-enum commandName { dvrouter, add, change, display, kill };
-const char* command_array[7] = { "dvrouter", "add", "change", "display", "kill" };
+enum commandName { add, change, display, kill };
+const char* command_array[4] = { "add", "change", "display", "kill" };
 
 DWORD __stdcall startMethodInThread(LPVOID arg);
 
@@ -29,71 +28,16 @@ DVRouting::DVRouting()
 {
 	broadcast_timeout = 10000; // 10s
 	keepalive_timeout = 30000; // 30s
-	rout_info_manag.front = &info_node;
-	rout_info_manag.rear = &info_node;
+
+	// initialize router_info
+	memset(router_info.hostname, 0, sizeof(router_info.hostname));
+	memset(router_info.ID, 0, sizeof(router_info.ID));
+	router_info.life_state = false;
+	router_info.link_info_count = 0;
+	router_info.portnum = 0;
+	router_info.sock = 0;
 }
 
-
-int DVRouting::enllist(RoutInfoManagLL* q, Info x)
-{
-	InfoNodeType  *s = new InfoNodeType;
-	if (s != NULL)
-	{
-		s->info = x;
-		s->next = NULL;	 // generate new node
-		q->rear->next = s;	// add new node in a queue
-		q->rear = s;		 // update rear pointer
-		return 0;
-	}
-	else
-		return -1;
-}
-
-
-int DVRouting::dellist(RoutInfoManagLL* q, char cond_id[])
-{
-	bool findflag = false;
-	InfoNodeType* x = q->front->next;
-	InfoNodeType* y = q->front;
-
-	while (x != NULL)
-	{
-		if (strcmp(x->info.ID, cond_id) == 0)
-		{
-			findflag = true;
-			break;
-		}
-		y = x;
-		x = x->next;
-	}
-	if (!findflag) return -1;
-	else
-	{
-		y->next = x->next; // update front pointer
-		if (x->next == NULL) q->rear = y;
-		delete x;		       // free the node
-		return 0;
-	}
-
-}
-
-
-DVRouting::Info* DVRouting::lookupllist(RoutInfoManagLL* q, char cond_id[])
-{
-	bool findflag = false;
-	InfoNodeType* x = q->front->next;
-	while (x != NULL)
-	{
-		if (strcmp(x->info.ID, cond_id) == 0)
-		{
-			findflag = true;
-			break;
-		}
-		x = x->next;
-	}
-	if (!findflag) return NULL;
-	else return &(x->info);
-}
 
 int DVRouting::lookupLinkInfoArray(LinkInfo link_info[], unsigned int link_info_count, char cond_link_to_ID[])
 {
@@ -208,28 +152,27 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 	RoutingTable routing_table;
 	RoutingInfo routing_info;
 	routing_table.entry_count = 0;
-	Info* info;
 	DVRouting* class_ptr = my_arg.ptr;
-
+	SOCKET sock;
+	sockaddr_in* remote_addr = new sockaddr_in;
+	char temp[10];
 	// initialize router
-	my_arg.info.sock = class_ptr->init_router(&my_arg.info);
-	my_arg.info.link_info_count = 0;
-	retval = enllist(&rout_info_manag, my_arg.info); // add new router into management queue
-	if (retval == -1)
+	sock = class_ptr->init_router(&my_arg.info);
+	if (sock == -1)
 	{
-		cout << "fatal error! exit..." << endl;
-		#ifdef DEBUG
-		cout << "rout_info_manag enllist error!" << endl;
-		#endif
-		closeAllSocket(&rout_info_manag);
+		cout << "socket error! exit..." << endl;
 		exit(0);
 	}
-
-	info = lookupllist(&rout_info_manag, my_arg.info.ID); // important! update my_arg.info
-	cout << "active" << endl;
+	memcpy(router_info.ID, my_arg.info.ID, sizeof(my_arg.info.ID));
+	//memcpy(router_info.hostname, my_arg.info.hostname, sizeof(my_arg.info.hostname));
+	router_info.portnum = my_arg.info.portnum;
+	router_info.sock = sock;
+	router_info.life_state = true;
+	itoa(router_info.portnum, temp, 10);
+	cout << "Router " + string(router_info.ID) + " (localhost, " + temp + ") is active. Waiting for input and output ..." << endl;
 
 	//initialize routing table
-	routing_info = makeRoutingInfo(info->ID, info->ID, 0, 0, info->ID);
+	routing_info = class_ptr->makeRoutingInfo(router_info.ID, router_info.ID, 0, 0, router_info.ID);
 	class_ptr->enRouter_table(&routing_table, routing_info);
 
 
@@ -238,13 +181,13 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 	unsigned long mode = 1;// set nonblocking mode
 	const timeval blocking_time{ 0, 100000 };
 	FD_ZERO(&readfds);
-	retval = ioctlsocket(info->sock, FIONBIO, &mode);
+	retval = ioctlsocket(router_info.sock, FIONBIO, &mode);
 	if (retval == SOCKET_ERROR)
 	{
 		retval = WSAGetLastError();
 		#ifdef DEBUG
 		cout << "select error ! exit..." << endl;
-		closeAllSocket(&rout_info_manag);
+		closesocket(router_info.sock);
 		exit(0);
 		#endif
 		return -1;
@@ -256,23 +199,23 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 	{	
 		// listen new msgs & update routing table
 		// select
-		FD_SET(info->sock, &readfds);
+		FD_SET(router_info.sock, &readfds);
 		retval = select(0, &readfds, NULL, NULL, &blocking_time);// noblocking
 		if (retval == SOCKET_ERROR)
 		{
 			retval = WSAGetLastError();
 			#ifdef DEBUG
 			cout << "select error ! exit..." << endl;
-			closeAllSocket(&rout_info_manag);
+			closesocket(router_info.sock);
 			exit(0);
 			#endif
 			break;
 		}
 
-		if (retval = FD_ISSET(info->sock, &readfds))
+		if (retval = FD_ISSET(router_info.sock, &readfds))
 		{
 			// recv event
-			if (class_ptr->recvRouterMsg(info->sock, recv_router_msg) != -1)
+			if (class_ptr->recvRouterMsg(router_info.sock, recv_router_msg, remote_addr) != -1)
 			{
 				// run Bellman-Ford algorithm
 				if (recv_router_msg->msg_count > 0)
@@ -283,11 +226,11 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 
 					for (i = 0; i < recv_router_msg->msg_count; i++)
 					{
-						if (strcmp(recv_router_msg->RInfo[i].DestRID, info->ID) == 0)
+						if (strcmp(recv_router_msg->RInfo[i].DestRID, router_info.ID) == 0)
 						{
-							if (index2 == -1)
+							if (index2 == -1) // add new entry
 							{
-								routing_info = makeRoutingInfo(info->ID, recv_router_msg->RInfo[i].SourRID, \
+								routing_info = makeRoutingInfo(router_info.ID, recv_router_msg->RInfo[i].SourRID, \
 									recv_router_msg->RInfo[i].cost, recv_router_msg->RInfo[i].numOfHops, \
 									recv_router_msg->RInfo[i].SourRID);
 
@@ -296,17 +239,51 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 								{
 									#ifdef DEBUG
 									cout << "routing table is full ! exit..." << endl;
-									closeAllSocket(&rout_info_manag);
+									closesocket(router_info.sock);
 									exit(0);
 									#endif
 									return -1;
 								}
+
+								// update link_info
+								if (router_info.link_info_count >= MaxnumOfRouter)
+								{
+									cout << "no more room for add!" << endl;
+									closesocket(router_info.sock);
+									exit(0);
+								}
+
+								memcpy(router_info.link_info[router_info.link_info_count].LinkToID, recv_router_msg->RInfo[i].SourRID, sizeof(recv_router_msg->RInfo[i].SourRID));
+								router_info.link_info[router_info.link_info_count].cost = recv_router_msg->RInfo[i].cost;
+								//memcpy(router_info.link_info[router_info.link_info_count].hostname, inet_ntoa(remote_addr->sin_addr), sizeof(inet_ntoa(remote_addr->sin_addr)));
+								router_info.link_info[router_info.link_info_count].portnum = ntohs(remote_addr->sin_port);
+								router_info.link_info[router_info.link_info_count].keepalive_time = clock();
+								router_info.link_info_count += 1;
+
+								cout << "The link " + string(router_info.ID) + "-" + recv_router_msg->RInfo[i].SourRID + " is set!"<< endl;
 							}
-							else
+							else // change existing entry
 							{
+								if (routing_table.RInfo[index2].cost != recv_router_msg->RInfo[i].cost)
+								{
+									cout << "The cost of link " + string(router_info.ID) + "-" + recv_router_msg->RInfo[i].SourRID + " is changed!" << endl;
+								}
 								routing_table.RInfo[index2].cost = recv_router_msg->RInfo[i].cost;
 								routing_table.RInfo[index2].numOfHops = recv_router_msg->RInfo[i].numOfHops;
 								routing_table.RInfo[index2].updateflag = true;
+
+								// update link_info
+								i = lookupLinkInfoArray(router_info.link_info, router_info.link_info_count, recv_router_msg->RInfo[i].SourRID);
+								if (i == -1)
+								{
+									cout << "change link_info error! exit..." << endl;
+									closesocket(router_info.sock);
+									exit(0);
+								}
+
+								router_info.link_info[i].cost = recv_router_msg->RInfo[i].cost;
+								router_info.link_info[i].keepalive_time = clock();
+
 							}
 							break;
 						}
@@ -324,10 +301,10 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 					{
 						int index = lookupRouter_table(routing_table, recv_router_msg->RInfo[i].DestRID);
 
-						if (index == -1)
+						if (index == -1) // add new entry
 						{
 							// update routing_table
-							routing_info = makeRoutingInfo(info->ID, recv_router_msg->RInfo[i].DestRID, \
+							routing_info = makeRoutingInfo(router_info.ID, recv_router_msg->RInfo[i].DestRID, \
 								recv_router_msg->RInfo[i].cost + routing_table.RInfo[index2].cost, \
 								recv_router_msg->RInfo[i].numOfHops + 1, \
 								recv_router_msg->RInfo[i].SourRID);
@@ -337,36 +314,40 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 							{
 								#ifdef DEBUG
 								cout << "routing table is full ! exit..." << endl;
-								closeAllSocket(&rout_info_manag);
+								closesocket(router_info.sock);
 								exit(0);
 								#endif
 								return -1;
 							}
 						}
-						else
+						else // change existing entry
 						{
-							if (recv_router_msg->RInfo[i].cost + routing_table.RInfo[index2].cost < \
+							if (strcmp(recv_router_msg->RInfo[i].SourRID, routing_table.RInfo[index].nextRID) == 0 \
+								|| recv_router_msg->RInfo[i].cost + routing_table.RInfo[index2].cost < \
 								routing_table.RInfo[index].cost)
 							{
 								// update routing_table
 								routing_table.RInfo[index].cost = recv_router_msg->RInfo[i].cost + \
 									routing_table.RInfo[index2].cost;
 								memcpy(routing_table.RInfo[index].nextRID, recv_router_msg->RInfo[i].SourRID, sizeof(recv_router_msg->RInfo[i].SourRID));
-								routing_table.RInfo[index].numOfHops = routing_table.RInfo[index2].numOfHops + 1;
+								routing_table.RInfo[index].numOfHops = recv_router_msg->RInfo[i].numOfHops + 1;
 								routing_table.RInfo[index].updateflag = true;
 							}
 						}
 					}
 				}
 
-				// update keepalive time
-				index = lookupLinkInfoArray(info->link_info, info->link_info_count, recv_router_msg->ID);
-				if (index == -1) {
-					i = 0;
-				}
+				else
+				{
+					// update keepalive time
+					index = lookupLinkInfoArray(router_info.link_info, router_info.link_info_count, recv_router_msg->ID);
+					if (index == -1) {
+						i = 0;
+					}
 
-				assert(index != -1);
-				info->link_info[index].keepalive_time = clock();
+					assert(index != -1);
+					router_info.link_info[index].keepalive_time = clock();
+				}
 			}	
 		}
 
@@ -375,11 +356,11 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 		// periodically broadcast advertisement to neighbors
 		if (clock() - time_start > broadcast_timeout)
 		{	
-			if (info->link_info_count > 0)
+			if (router_info.link_info_count > 0)
 			{
 				send_router_msg->type = 0; // default
 				send_router_msg->msg_count = 0;
-				memcpy(send_router_msg->ID, info->ID, sizeof(info->ID));
+				memcpy(send_router_msg->ID, router_info.ID, sizeof(router_info.ID));
 				// broadcast changed entries
 				for (i = 0, j = 0; i < routing_table.entry_count; i++)
 				{
@@ -392,9 +373,9 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 				}
 				send_router_msg->msg_count = j;
 
-				for (i = 0; i < info->link_info_count; i++) // traverse neighbors
+				for (i = 0; i < router_info.link_info_count; i++) // traverse neighbors
 				{
-					class_ptr->sendRouterMsg(info->ID, info->link_info[i].LinkToID, send_router_msg);
+					class_ptr->sendRouterMsg(router_info.link_info[i].LinkToID, send_router_msg);
 				}
 			}
 			
@@ -402,19 +383,20 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 		}
 
 		// keep alive process: tell whether neighbors are alive
-		for (i = 0; i < info->link_info_count; i++)
+		for (i = 0; i < router_info.link_info_count; i++)
 		{
-			if (clock() - info->link_info[i].keepalive_time > keepalive_timeout)
+			if (clock() - router_info.link_info[i].keepalive_time > keepalive_timeout)
+			//if (false)
 			{
 
 				// update routing table
 				#ifdef _POISONREVERSE
-				index2 = lookupRouter_table(routing_table, info->link_info[i].LinkToID);
+				index2 = lookupRouter_table(routing_table, router_info.link_info[i].LinkToID);
 				assert(index2 != -1);
 				routing_table.RInfo[index2].cost = POISONMETRIC;
 				routing_table.RInfo[index2].updateflag = true;
 				#else
-				retval = deRouter_table(&routing_table, info->link_info[i].LinkToID);
+				retval = deRouter_table(&routing_table, router_info.link_info[i].LinkToID);
 				if (retval == -1) {
 					i = 0;
 				}
@@ -422,11 +404,11 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 				#endif
 
 				// remove the link
-				if (deInfoArray(info->link_info, &(info->link_info_count), info->link_info[i].LinkToID) == -1)
+				if (deInfoArray(router_info.link_info, &(router_info.link_info_count), router_info.link_info[i].LinkToID) == -1)
 				{
 					#ifdef DEBUG
 					cout << "deInfoArray error! exit..." << endl;
-					closeAllSocket(&rout_info_manag);
+					closesocket(router_info.sock);
 					exit(0);
 					#endif
 					return -1;
@@ -437,24 +419,19 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 
 
 		// kill
-		if (strcmp(kill_flag, info->ID) == 0)
+		if (strcmp(kill_flag, router_info.ID) == 0)
 		{
 			memset(kill_flag, 0, sizeof(kill_flag)); // clear kill_flag
-			closesocket(info->sock);
-			if (dellist(&rout_info_manag, info->ID) == -1)
-			{
-				cout << "kill error! exit..." << endl;
-				closeAllSocket(&rout_info_manag);
-				exit(0);
-			}
+			closesocket(router_info.sock);
+			cout<< "Router " + string(router_info.ID) + " is about to be terminated..."<<endl;
 			break;
 		}
 
 		// display routing table
-		if (strcmp(display_flag, info->ID) == 0)
+		if (strcmp(display_flag, router_info.ID) == 0)
 		{
 			memset(display_flag, 0, sizeof(display_flag)); // clear display_flag
-			cout << "The distance vector for Router " + string(info->ID) + " is:" << endl;
+			cout << "The distance vector for Router " + string(router_info.ID) + " is:" << endl;
 			for (i = 0; i < routing_table.entry_count; i++)
 			{
 				cout << routing_table.RInfo[i].SourRID + string(" ") + string(routing_table.RInfo[i].DestRID)\
@@ -467,11 +444,11 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 
 
 		// update flag: add or change
-		if (strcmp(update_flag.update_router_ID, info->ID) == 0)
+		if (strcmp(update_flag.update_router_ID, router_info.ID) == 0)
 		{
 
 			index = lookupRouter_table(routing_table, update_flag.update_link_ID);
-			index2 = lookupLinkInfoArray(info->link_info, info->link_info_count, update_flag.update_link_ID);
+			index2 = lookupLinkInfoArray(router_info.link_info, router_info.link_info_count, update_flag.update_link_ID);
 			if (index2 == -1) {
 				i = 0;
 			}
@@ -479,15 +456,15 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 			assert(index2 != -1);
 			if (index == -1) // add
 			{
-				routing_info = makeRoutingInfo(info->ID, update_flag.update_link_ID, \
-					info->link_info[index2].cost, 1, update_flag.update_link_ID);
+				routing_info = makeRoutingInfo(router_info.ID, update_flag.update_link_ID, \
+					router_info.link_info[index2].cost, 1, update_flag.update_link_ID);
 
 				retval = class_ptr->enRouter_table(&routing_table, routing_info);
 				if (retval == -1)
 				{
 					#ifdef DEBUG
 					cout << "routing table is full ! exit..." << endl;
-					closeAllSocket(&rout_info_manag);
+					closesocket(router_info.sock);
 					exit(0);
 					#endif
 					return -1;
@@ -495,7 +472,7 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 			}
 			else // change
 			{
-				routing_table.RInfo[index].cost = info->link_info[index2].cost;
+				routing_table.RInfo[index].cost = router_info.link_info[index2].cost;
 				routing_table.RInfo[index].updateflag = true;
 			}
 			memset(update_flag.update_router_ID, 0, sizeof(update_flag.update_router_ID)); // clear
@@ -505,7 +482,7 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 
 	delete recv_router_msg;
 	delete send_router_msg;
-
+	delete remote_addr;
 	return 0;
 }
 
@@ -520,37 +497,44 @@ DWORD __stdcall startMethodInThread(LPVOID arg)
 	return 0;
 }
 
-int DVRouting::sendRouterMsg(char s_RID[], char d_RID[], routerMsg* rmsg)
+int DVRouting::sendRouterMsg(char d_RID[], routerMsg* rmsg)
 {
-	int retval;
-	Info *s_info, *d_info;
-	sockaddr remote_addr;
-	int remote_addr_len = sizeof(remote_addr);
-	s_info = lookupllist(&rout_info_manag, s_RID);
-	d_info = lookupllist(&rout_info_manag, d_RID);
-	if (d_info == NULL) return -1; // most likely the peer router has been killed
-	getsockname(d_info->sock, &remote_addr, &remote_addr_len); // get remote address
+	int retval, index;
+	sockaddr_in remote_addr;
+	index = lookupLinkInfoArray(router_info.link_info, router_info.link_info_count, d_RID);
+	if (index == -1)
+	{
+		#ifdef DEBUG
+		cout << "send msg error ! exit..." << endl;
+		closesocket(router_info.sock);
+		exit(0);
+		#endif
+		return -1;
+	}
 
-
-	retval = sendto(s_info->sock, (char*)rmsg, sizeof(*rmsg), 0, &remote_addr, remote_addr_len);
+	remote_addr.sin_family = AF_INET;
+	//remote_addr.sin_addr.s_addr = inet_addr(router_info.link_info[index].hostname);
+	remote_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+	remote_addr.sin_port = htons(router_info.link_info[index].portnum);
+	retval = sendto(router_info.sock, (char*)rmsg, sizeof(*rmsg), 0, (sockaddr*)&remote_addr, sizeof(remote_addr));
 	if (retval < 0)
 	{
 		#ifdef DEBUG
 		cout << "send msg error ! exit..." << endl;
-		closeAllSocket(&rout_info_manag);
+		closesocket(router_info.sock);
 		exit(0);
 		#endif
+		return -1;
 	}
 	return 0;
 }
 
-int DVRouting::recvRouterMsg(SOCKET sock, routerMsg* rmsg)
+int DVRouting::recvRouterMsg(SOCKET sock, routerMsg* rmsg, sockaddr_in* remote_addr)
 {
 	char recvbuf[1024];
 	int len, retval;
-	sockaddr remote_addr;
-	int remote_addr_len = sizeof(remote_addr);
-	len = recvfrom(sock, recvbuf, sizeof(recvbuf), 0, &remote_addr, &remote_addr_len);
+	int remote_addr_len = sizeof(*remote_addr);
+	len = recvfrom(sock, recvbuf, sizeof(recvbuf), 0, (sockaddr*)remote_addr, &remote_addr_len);
 	if (len <= 0)
 	{
 		retval = WSAGetLastError();
@@ -586,7 +570,7 @@ SOCKET DVRouting::init_router(Info* info)
 		retval = WSAGetLastError();
 		#ifdef DEBUG
 		cout << "router initialization error ! exit..." << endl;
-		closeAllSocket(&rout_info_manag);
+		closesocket(info->sock);
 		exit(0);
 		#endif
 		return -1;
@@ -594,18 +578,8 @@ SOCKET DVRouting::init_router(Info* info)
 	return sock;
 }
 
-int DVRouting::closeAllSocket(RoutInfoManagLL* q)
-{
-	InfoNodeType* x = q->front->next;
-	while (x != NULL)
-	{
-		closesocket(x->info.sock);
-		x = x->next;
-	}
-	return 0;
-}
 
-void DVRouting::frontend(void)
+void DVRouting::frontend(char ID[], unsigned int portnum)
 {
 
 	char command[100];
@@ -614,10 +588,33 @@ void DVRouting::frontend(void)
 	string sub_cmd2;
 	string sub_cmd3;
 	string sub_cmd4;
-	Info *currentR = NULL, *operationR = NULL;
+
 	char operate[10];
 	int i = 0;
 	thread_arg arg;
+
+
+
+	Info* tempInfo = new Info;
+	memcpy((*tempInfo).ID, ID, sizeof(ID));
+	memcpy((*tempInfo).hostname, "127.0.0.1", sizeof("127.0.0.1"));
+	(*tempInfo).portnum = portnum;
+
+	arg = { this, *tempInfo };
+
+	DWORD dwThreadId;
+	HANDLE hThread;
+	hThread = CreateThread(
+		NULL,                        // no security attributes 
+		0,                           // use default stack size  
+		startMethodInThread,                  // thread function 
+		&arg,                // argument to thread function 
+		0,                           // use default creation flags 
+		&dwThreadId);                // returns the thread identifier
+
+
+	while (router_info.life_state == false);
+	delete tempInfo;
 
 	while (1)
 	{
@@ -627,181 +624,81 @@ void DVRouting::frontend(void)
 			if (cin.getline(command, sizeof(command)))
 			{
 				cmd = string(command);
-				if (cmd.substr(0, cmd.find(" ")) == command_array[dvrouter])
+			
+				if (cmd.substr(0, cmd.find(" ")) == command_array[add])
 				{
-					sub_cmd = cmd.substr(cmd.find(" ") + 1, cmd.find(" ", cmd.find(" ") + 1) - cmd.find(" ") - 1);
-					sub_cmd2 = cmd.substr(cmd.find(" ", cmd.find(" ") + 1) + 1);
-
-					currentR = lookupllist(&rout_info_manag, (char*)sub_cmd.c_str());
-					if (currentR != NULL) // already active, used for checkout
-					{
-						cout << "checkout to " + sub_cmd << endl;
-						continue;
-					}
-
-					Info* tempInfo = new Info;
-					memcpy((*tempInfo).ID, sub_cmd.c_str(), sizeof(sub_cmd.c_str()));
-					memcpy((*tempInfo).hostname, "127.0.0.1", sizeof("127.0.0.1"));
-					(*tempInfo).portnum = atoi(sub_cmd2.c_str());
-					(*tempInfo).life_state = true;
-
-					arg = { this, *tempInfo };
-
-					DWORD dwThreadId;
-					HANDLE hThread;
-					hThread = CreateThread(
-						NULL,                        // no security attributes 
-						0,                           // use default stack size  
-						startMethodInThread,                  // thread function 
-						&arg,                // argument to thread function 
-						0,                           // use default creation flags 
-						&dwThreadId);                // returns the thread identifier
-					
-					currentR = lookupllist(&rout_info_manag, (char*)sub_cmd.c_str()); // point to real addr
-					while (currentR == NULL)
-					{
-						currentR = lookupllist(&rout_info_manag, (char*)sub_cmd.c_str());
-					}
-					delete tempInfo;
-				}
-				else if (cmd.substr(0, cmd.find(" ")) == command_array[add])
-				{
-					if (currentR == NULL)
-					{
-						cout << "add is not allowed!" << endl;
-						continue;
-					}
 					sub_cmd = cmd.substr(cmd.find(" ") + 1, cmd.find(" ", cmd.find(" ") + 1) - cmd.find(" ") - 1); //router
 					sub_cmd2 = cmd.substr(cmd.find(" ", cmd.find(" ") + 1) + 1, cmd.find(" ", cmd.find(" ", cmd.find(" ") + 1) + 1) - cmd.find(" ", cmd.find(" ") + 1) - 1); // hostname
 					sub_cmd3 = cmd.substr(cmd.find(" ", cmd.find(" ", cmd.find(" ") + 1) + 1) + 1, cmd.find(" ", cmd.find(" ", cmd.find(" ", cmd.find(" ") + 1) + 1) + 1) - cmd.find(" ", cmd.find(" ", cmd.find(" ") + 1) + 1) - 1);// port number
 					sub_cmd4 = cmd.substr(cmd.find(" ", cmd.find(" ", cmd.find(" ", cmd.find(" ") + 1) + 1) + 1) + 1);// cost
 					memcpy(operate, sub_cmd.c_str(), sizeof(sub_cmd.c_str()));
-					operationR = lookupllist(&rout_info_manag, operate);
-					if (operationR == NULL)
-					{
-						cout << sub_cmd + "is not alive!" << endl;
-						continue;
-					}
 
-					if ((*(operationR)).life_state)
+
+					if (1)
 					{
 						// update current router
-						i = lookupLinkInfoArray((*currentR).link_info, (*currentR).link_info_count, operate);
+						i = lookupLinkInfoArray(router_info.link_info, router_info.link_info_count, operate);
 						if (i != -1) // already exists
 						{
-							cout << "link " + string((*currentR).ID) + "-" + operate + " already exists! add is not allowed!" << endl;
+							cout << "The link " + string(router_info.ID) + "-" + operate + " already exists! add is not allowed!" << endl;
 							continue;
 						}
-						if ((*currentR).link_info_count >= MaxnumOfRouter)
+						if (router_info.link_info_count >= MaxnumOfRouter)
 						{
 							cout << "no more room for add!" << endl;
 							continue;
 						}
 
-						memcpy(&((*currentR).link_info[(*currentR).link_info_count].LinkToID), operate, sizeof(operate));
-						(*currentR).link_info[(*currentR).link_info_count].cost = atoi(sub_cmd4.c_str());
-						(*currentR).link_info[(*currentR).link_info_count].keepalive_time = clock();
-						(*currentR).link_info_count += 1;
-
-						// update operate router
-						i = lookupLinkInfoArray((*operationR).link_info, (*operationR).link_info_count, (*currentR).ID);
-						if (i != -1) // it depends !!!
-						{
-							cout << "link " + string(operate) + "-" + (*currentR).ID + " already exists! add is not allowed!" << endl;
-							closeAllSocket(&rout_info_manag);
-							exit(0);
-						}
-
-						if ((*operationR).link_info_count >= MaxnumOfRouter)
-						{
-							cout << "no more room for add!" << endl;
-							closeAllSocket(&rout_info_manag);
-							exit(0);
-						}
-						memcpy(&((*operationR).link_info[(*operationR).link_info_count].LinkToID), (*currentR).ID, sizeof((*currentR).ID));
-						(*operationR).link_info[(*operationR).link_info_count].cost = atoi(sub_cmd4.c_str());
-						(*operationR).link_info[(*operationR).link_info_count].keepalive_time = clock();
-						(*operationR).link_info_count += 1;
+						memcpy(router_info.link_info[router_info.link_info_count].LinkToID, operate, sizeof(operate));
+						router_info.link_info[router_info.link_info_count].cost = atoi(sub_cmd4.c_str());
+//						memcpy(router_info.link_info[router_info.link_info_count].hostname, sub_cmd2.c_str(), sub_cmd2.length());
+						router_info.link_info[router_info.link_info_count].portnum = atoi(sub_cmd3.c_str());
+						router_info.link_info[router_info.link_info_count].keepalive_time = clock();
+						router_info.link_info_count += 1;
 
 						// update flag
-						memcpy(update_flag.update_router_ID, (*currentR).ID, sizeof((*currentR).ID));
-						memcpy(update_flag.update_link_ID, (*operationR).ID, sizeof((*operationR).ID));
+						memcpy(update_flag.update_router_ID, router_info.ID, sizeof(router_info.ID));
+						memcpy(update_flag.update_link_ID, operate, sizeof(operate));
 
+						cout << "The link " + string(router_info.ID) + "-" + operate + " is set!" << endl;
 					}
-					else
-					{
-						cout << sub_cmd + "is not alive!" << endl;
-					}
+
 
 
 				}
 				else if (cmd.substr(0, cmd.find(" ")) == command_array[change])
 				{
-					if (currentR == NULL)
-					{
-						cout << "change is not allowed!" << endl;
-						continue;
-					}
 					sub_cmd = cmd.substr(cmd.find(" ") + 1, cmd.find(" ", cmd.find(" ") + 1) - cmd.find(" ") - 1);
 					sub_cmd2 = cmd.substr(cmd.find(" ", cmd.find(" ") + 1) + 1);
 					memcpy(operate, sub_cmd.c_str(), sizeof(sub_cmd.c_str()));
-					operationR = lookupllist(&rout_info_manag, operate);
-					if (operationR == NULL)
-					{
-						cout << sub_cmd + "is not alive!" << endl;
-						continue;
-					}
-
-					if ((*(operationR)).life_state)
+					
+					if (1)
 					{
 						// update current router
-						i = lookupLinkInfoArray((*currentR).link_info, (*currentR).link_info_count, operate);
+						i = lookupLinkInfoArray(router_info.link_info, router_info.link_info_count, operate);
 						if (i == -1)
 						{
-							cout << "link " +  string((*currentR).ID) + "-" + operate + " is not set!" << endl;
+							cout << "The link " +  string(router_info.ID) + "-" + operate + " is not set!" << endl;
 							continue;
 						}
 
-						(*currentR).link_info[i].cost = atoi(sub_cmd2.c_str());
-
-						// update operate router
-						i = lookupLinkInfoArray((*operationR).link_info, (*operationR).link_info_count, (*currentR).ID);
-						if (i == -1) // it depends !!!
-						{
-							cout << "link " + string(operate) + "-" + (*currentR).ID + " is not set!" << endl;
-							closeAllSocket(&rout_info_manag);
-							exit(0);
-						}
-
-						(*operationR).link_info[i].cost = atoi(sub_cmd2.c_str());
+						router_info.link_info[i].cost = atoi(sub_cmd2.c_str());
 
 						// update flag
-						memcpy(update_flag.update_router_ID, (*currentR).ID, sizeof((*currentR).ID));
-						memcpy(update_flag.update_link_ID, (*operationR).ID, sizeof((*operationR).ID));
-					}
-					else
-					{
-						cout << sub_cmd + "is not alive!" << endl;
+						memcpy(update_flag.update_router_ID,router_info.ID, sizeof(router_info.ID));
+						memcpy(update_flag.update_link_ID, operate, sizeof(operate));
+
+						cout << "The cost of link " + string(router_info.ID) + "-" + operate + " is changed!" <<endl;
 					}
 				}
 				else if (cmd.substr(0, cmd.find(" ")) == command_array[display])
 				{
-					if (currentR == NULL)
-					{
-						cout << "display is not allowed!" << endl;
-						continue;
-					}
-					memcpy(display_flag, (*currentR).ID, sizeof((*currentR).ID));
+					memcpy(display_flag, router_info.ID, sizeof(router_info.ID));
 				}
 				else if (cmd.substr(0, cmd.find(" ")) == command_array[kill])
 				{
-					if (currentR == NULL)
-					{
-						cout << "kill is not allowed!" << endl;
-						continue;
-					}
-					memcpy(kill_flag, (*currentR).ID, sizeof((*currentR).ID));
-					currentR = NULL;
+					memcpy(kill_flag, router_info.ID, sizeof(router_info.ID));
+					break;
 				}
 				else
 				{
@@ -810,26 +707,4 @@ void DVRouting::frontend(void)
 			}
 		}
 	}
-	delete currentR;
-	delete operationR;
 }
-
-
-
-int main(int argc, char**argv)
-{
-	cout << "#########################################################" << endl;
-	cout << "*********************************************************" << endl;
-	cout << "******************DVRouting******************************" << endl;
-	cout << "*****************************author: Yu Chen & Zhan Shi**" << endl;
-	cout << "*********************************************************" << endl;
-	cout << "#########################################################" << endl;
-
-	WSAData wsa;
-	WSAStartup(0x101, &wsa);
-	DVRouting dvr;
-	dvr.frontend();
-	
-	return 0;
-}
-
