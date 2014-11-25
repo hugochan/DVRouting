@@ -73,7 +73,7 @@ private:
 	// Message format
 	typedef struct
 	{
-		char type;
+		char type; // 0 - routing msg, 1 - direct - link msg
 		char ID[10];
 		RoutingInfo RInfo[MaxnumOfRouter];
 		unsigned int msg_count;

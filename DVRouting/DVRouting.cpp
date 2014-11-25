@@ -220,18 +220,77 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 				// run Bellman-Ford algorithm
 				if (recv_router_msg->msg_count > 0)
 				{
-					// update routing_table
-					// update routing info with neighbors if allowed
-					index2 = lookupRouter_table(routing_table, recv_router_msg->RInfo[0].SourRID);
-
-					for (i = 0; i < recv_router_msg->msg_count; i++)
+					if (recv_router_msg->type == 0) // routing msg
 					{
-						if (strcmp(recv_router_msg->RInfo[i].DestRID, router_info.ID) == 0)
+						// update routing_table
+						// update routing info with neighbors if allowed
+						index2 = lookupRouter_table(routing_table, recv_router_msg->RInfo[0].SourRID);
+
+						for (i = 0; i < recv_router_msg->msg_count; i++)
 						{
-							if (index2 == -1) // add new entry
+							if (strcmp(recv_router_msg->RInfo[i].DestRID, router_info.ID) == 0)
 							{
-								routing_info = makeRoutingInfo(router_info.ID, recv_router_msg->RInfo[i].SourRID, \
-									recv_router_msg->RInfo[i].cost, recv_router_msg->RInfo[i].numOfHops, \
+								if (index2 == -1) // add new entry
+								{
+									routing_info = makeRoutingInfo(router_info.ID, recv_router_msg->RInfo[i].SourRID, \
+										recv_router_msg->RInfo[i].cost, recv_router_msg->RInfo[i].numOfHops, \
+										recv_router_msg->RInfo[i].SourRID);
+
+									retval = class_ptr->enRouter_table(&routing_table, routing_info);
+									if (retval == -1)
+									{
+										#ifdef DEBUG
+										cout << "routing table is full ! exit..." << endl;
+										closesocket(router_info.sock);
+										exit(0);
+										#endif
+										return -1;
+									}
+								}
+								else // change existing entry
+								{
+									if (strcmp(routing_table.RInfo[index2].nextRID, recv_router_msg->RInfo[i].SourRID) == 0)
+									{
+										if ((routing_table.RInfo[index2].cost != recv_router_msg->RInfo[i].cost)) // some issues might ocur
+										{
+											routing_table.RInfo[index2].cost = recv_router_msg->RInfo[i].cost;
+											routing_table.RInfo[index2].numOfHops = recv_router_msg->RInfo[i].numOfHops;
+											routing_table.RInfo[index2].updateflag = true;
+										}
+									}
+									else
+									{
+										if (routing_table.RInfo[index2].cost >= recv_router_msg->RInfo[i].cost)
+										{
+											routing_table.RInfo[index2].cost = recv_router_msg->RInfo[i].cost;
+											routing_table.RInfo[index2].numOfHops = recv_router_msg->RInfo[i].numOfHops;
+											memcpy(routing_table.RInfo[index2].nextRID, recv_router_msg->RInfo[i].SourRID, sizeof(recv_router_msg->RInfo[i].SourRID));
+											routing_table.RInfo[index2].updateflag = true;
+										}
+									}
+								}
+								break;
+							}
+						}
+
+
+						index2 = lookupRouter_table(routing_table, recv_router_msg->RInfo[0].SourRID);
+						if (index2 == -1) {
+							i = 0;
+						}
+						assert(index2 != -1);
+
+						// update other routing info
+						for (i = 0; i < recv_router_msg->msg_count; i++)
+						{
+							int index = lookupRouter_table(routing_table, recv_router_msg->RInfo[i].DestRID);
+
+							if (index == -1) // add new entry
+							{
+								// update routing_table
+								routing_info = makeRoutingInfo(router_info.ID, recv_router_msg->RInfo[i].DestRID, \
+									recv_router_msg->RInfo[i].cost + routing_table.RInfo[index2].cost, \
+									recv_router_msg->RInfo[i].numOfHops + 1, \
 									recv_router_msg->RInfo[i].SourRID);
 
 								retval = class_ptr->enRouter_table(&routing_table, routing_info);
@@ -244,95 +303,58 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 									#endif
 									return -1;
 								}
-
-								// update link_info
-								if (router_info.link_info_count >= MaxnumOfRouter)
-								{
-									cout << "no more room for add!" << endl;
-									closesocket(router_info.sock);
-									exit(0);
-								}
-
-								memcpy(router_info.link_info[router_info.link_info_count].LinkToID, recv_router_msg->RInfo[i].SourRID, sizeof(recv_router_msg->RInfo[i].SourRID));
-								router_info.link_info[router_info.link_info_count].cost = recv_router_msg->RInfo[i].cost;
-								//memcpy(router_info.link_info[router_info.link_info_count].hostname, inet_ntoa(remote_addr->sin_addr), sizeof(inet_ntoa(remote_addr->sin_addr)));
-								router_info.link_info[router_info.link_info_count].portnum = ntohs(remote_addr->sin_port);
-								router_info.link_info[router_info.link_info_count].keepalive_time = clock();
-								router_info.link_info_count += 1;
-
-								cout << "The link " + string(router_info.ID) + "-" + recv_router_msg->RInfo[i].SourRID + " is set!"<< endl;
 							}
 							else // change existing entry
 							{
-								if (routing_table.RInfo[index2].cost != recv_router_msg->RInfo[i].cost)
+								if (strcmp(recv_router_msg->RInfo[i].SourRID, routing_table.RInfo[index].nextRID) == 0 \
+									|| recv_router_msg->RInfo[i].cost + routing_table.RInfo[index2].cost < \
+									routing_table.RInfo[index].cost)
 								{
-									cout << "The cost of link " + string(router_info.ID) + "-" + recv_router_msg->RInfo[i].SourRID + " is changed!" << endl;
+									// update routing_table
+									routing_table.RInfo[index].cost = recv_router_msg->RInfo[i].cost + \
+										routing_table.RInfo[index2].cost;
+									memcpy(routing_table.RInfo[index].nextRID, recv_router_msg->RInfo[i].SourRID, sizeof(recv_router_msg->RInfo[i].SourRID));
+									routing_table.RInfo[index].numOfHops = recv_router_msg->RInfo[i].numOfHops + 1;
+									routing_table.RInfo[index].updateflag = true;
 								}
-								routing_table.RInfo[index2].cost = recv_router_msg->RInfo[i].cost;
-								routing_table.RInfo[index2].numOfHops = recv_router_msg->RInfo[i].numOfHops;
-								routing_table.RInfo[index2].updateflag = true;
-
-								// update link_info
-								i = lookupLinkInfoArray(router_info.link_info, router_info.link_info_count, recv_router_msg->RInfo[i].SourRID);
-								if (i == -1)
-								{
-									cout << "change link_info error! exit..." << endl;
-									closesocket(router_info.sock);
-									exit(0);
-								}
-
-								router_info.link_info[i].cost = recv_router_msg->RInfo[i].cost;
-								router_info.link_info[i].keepalive_time = clock();
-
 							}
-							break;
 						}
 					}
-
-					
-					index2 = lookupRouter_table(routing_table, recv_router_msg->RInfo[0].SourRID);
-					if (index2 == -1) {
-						i = 0;
-					}
-					assert(index2 != -1);
-
-					// update other routing info
-					for (i = 0; i < recv_router_msg->msg_count; i++)
+					else if (recv_router_msg->type == 1) // direct - link msg
 					{
-						int index = lookupRouter_table(routing_table, recv_router_msg->RInfo[i].DestRID);
-
-						if (index == -1) // add new entry
+						index = lookupLinkInfoArray(router_info.link_info, router_info.link_info_count, recv_router_msg->RInfo[0].SourRID);
+						if (index == -1)
 						{
-							// update routing_table
-							routing_info = makeRoutingInfo(router_info.ID, recv_router_msg->RInfo[i].DestRID, \
-								recv_router_msg->RInfo[i].cost + routing_table.RInfo[index2].cost, \
-								recv_router_msg->RInfo[i].numOfHops + 1, \
-								recv_router_msg->RInfo[i].SourRID);
-
-							retval = class_ptr->enRouter_table(&routing_table, routing_info);
-							if (retval == -1)
+							// add
+							if (router_info.link_info_count >= MaxnumOfRouter)
 							{
-								#ifdef DEBUG
-								cout << "routing table is full ! exit..." << endl;
+								cout << "no more room for add!" << endl;
 								closesocket(router_info.sock);
 								exit(0);
-								#endif
-								return -1;
 							}
+
+							memcpy(router_info.link_info[router_info.link_info_count].LinkToID, recv_router_msg->RInfo[0].SourRID, sizeof(recv_router_msg->RInfo[0].SourRID));
+							router_info.link_info[router_info.link_info_count].cost = recv_router_msg->RInfo[0].cost;
+							//memcpy(router_info.link_info[router_info.link_info_count].hostname, inet_ntoa(remote_addr->sin_addr), sizeof(inet_ntoa(remote_addr->sin_addr)));
+							router_info.link_info[router_info.link_info_count].portnum = ntohs(remote_addr->sin_port);
+							router_info.link_info[router_info.link_info_count].keepalive_time = clock();
+							router_info.link_info_count += 1;
+							cout << "The link " + string(router_info.ID) + "-" + recv_router_msg->RInfo[0].SourRID + " is set!" << endl;
 						}
-						else // change existing entry
+						else
 						{
-							if (strcmp(recv_router_msg->RInfo[i].SourRID, routing_table.RInfo[index].nextRID) == 0 \
-								|| recv_router_msg->RInfo[i].cost + routing_table.RInfo[index2].cost < \
-								routing_table.RInfo[index].cost)
+							// change
+							if (router_info.link_info[index].cost == recv_router_msg->RInfo[0].cost)
 							{
-								// update routing_table
-								routing_table.RInfo[index].cost = recv_router_msg->RInfo[i].cost + \
-									routing_table.RInfo[index2].cost;
-								memcpy(routing_table.RInfo[index].nextRID, recv_router_msg->RInfo[i].SourRID, sizeof(recv_router_msg->RInfo[i].SourRID));
-								routing_table.RInfo[index].numOfHops = recv_router_msg->RInfo[i].numOfHops + 1;
-								routing_table.RInfo[index].updateflag = true;
+								router_info.link_info[index].keepalive_time = clock();
 							}
+							else
+							{
+								router_info.link_info[index].cost = recv_router_msg->RInfo[0].cost;
+								router_info.link_info[index].keepalive_time = clock();
+								cout << "The cost of link " + string(router_info.ID) + "-" + recv_router_msg->RInfo[0].SourRID + " is changed!" << endl;
+							}
+
 						}
 					}
 				}
@@ -364,7 +386,8 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 				// broadcast changed entries
 				for (i = 0, j = 0; i < routing_table.entry_count; i++)
 				{
-					if (routing_table.RInfo[i].updateflag == true)
+					//if (routing_table.RInfo[i].updateflag == true)
+					if (true) // broadcast all the entries
 					{
 						send_router_msg->RInfo[j] = routing_table.RInfo[i];
 						j++;
@@ -396,9 +419,10 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 				routing_table.RInfo[index2].cost = POISONMETRIC;
 				routing_table.RInfo[index2].updateflag = true;
 				#else
+
 				retval = deRouter_table(&routing_table, router_info.link_info[i].LinkToID);
 				if (retval == -1) {
-					i = 0;
+					retval = 0;
 				}
 				assert(retval != -1);
 				#endif
@@ -454,7 +478,7 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 			}
 
 			assert(index2 != -1);
-			if (index == -1) // add
+			if (index == -1) // add new entry to routing_table
 			{
 				routing_info = makeRoutingInfo(router_info.ID, update_flag.update_link_ID, \
 					router_info.link_info[index2].cost, 1, update_flag.update_link_ID);
@@ -470,11 +494,48 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 					return -1;
 				}
 			}
-			else // change
+			else // existing entry
 			{
-				routing_table.RInfo[index].cost = router_info.link_info[index2].cost;
-				routing_table.RInfo[index].updateflag = true;
+				
+				if (strcmp(routing_table.RInfo[index].nextRID, update_flag.update_link_ID) == 0) // origin entry was direct link 
+				{
+					routing_table.RInfo[index].cost = router_info.link_info[index2].cost; // ??
+					routing_table.RInfo[index].updateflag = true;
+				}
+				else
+				{
+					if (routing_table.RInfo[index].cost >= router_info.link_info[index2].cost)
+					{
+						routing_table.RInfo[index].cost = router_info.link_info[index2].cost;
+						routing_table.RInfo[index].numOfHops = 1;
+						memcpy(routing_table.RInfo[index].nextRID, update_flag.update_link_ID, sizeof(update_flag.update_link_ID));
+						routing_table.RInfo[index].updateflag = true;
+					}
+				}
+				
 			}
+
+			// send direct msg to the specifical neighbor to update link_info & routing_table (changed entry)
+			send_router_msg->type = 1; // direct - link msg
+			memcpy(send_router_msg->ID, router_info.ID, sizeof(router_info.ID));
+			send_router_msg->RInfo[0] = makeRoutingInfo(router_info.ID, update_flag.update_link_ID, \
+				router_info.link_info[index2].cost, 1, update_flag.update_link_ID);
+			send_router_msg->msg_count = 1;
+			sendRouterMsg(update_flag.update_link_ID, send_router_msg);
+			
+			
+			
+			// triggered update
+			send_router_msg->type = 0; // routing_table msg
+			memcpy(send_router_msg->ID, router_info.ID, sizeof(router_info.ID));
+			index = lookupRouter_table(routing_table, update_flag.update_link_ID);
+			assert(index != -1);
+			send_router_msg->RInfo[0] = routing_table.RInfo[index];
+			send_router_msg->msg_count = 1;
+			sendRouterMsg(update_flag.update_link_ID, send_router_msg);
+
+
+			// clear flags
 			memset(update_flag.update_router_ID, 0, sizeof(update_flag.update_router_ID)); // clear
 			memset(update_flag.update_link_ID, 0, sizeof(update_flag.update_link_ID)); // clear
 		}
