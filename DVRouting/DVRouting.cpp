@@ -273,12 +273,14 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 							}
 						}
 
-
 						index2 = lookupRouter_table(routing_table, recv_router_msg->RInfo[0].SourRID);
 						if (index2 == -1) {
 							i = 0;
 						}
 						assert(index2 != -1);
+
+
+
 
 						// update other routing info
 						for (i = 0; i < recv_router_msg->msg_count; i++)
@@ -287,6 +289,12 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 
 							if (index == -1) // add new entry
 							{
+								#ifdef _POISONREVERSE
+								if (recv_router_msg->RInfo[i].cost >= POISONMETRIC)
+								{
+									continue;
+								}
+								#endif
 								// update routing_table
 								routing_info = makeRoutingInfo(router_info.ID, recv_router_msg->RInfo[i].DestRID, \
 									recv_router_msg->RInfo[i].cost + routing_table.RInfo[index2].cost, \
@@ -392,6 +400,17 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 						send_router_msg->RInfo[j] = routing_table.RInfo[i];
 						j++;
 						routing_table.RInfo[i].updateflag = false;
+						
+						#ifdef _POISONREVERSE
+						if (routing_table.RInfo[i].cost >= POISONMETRIC)
+						{
+							retval = deRouter_table(&routing_table, routing_table.RInfo[i].DestRID);
+							if (retval == -1) {
+								retval = 0;
+							}
+							assert(retval != -1);
+						}
+						#endif
 					}
 				}
 				send_router_msg->msg_count = j;
@@ -415,10 +434,10 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 				#ifdef _POISONREVERSE
 				index2 = lookupRouter_table(routing_table, router_info.link_info[i].LinkToID);
 				assert(index2 != -1);
-				routing_table.RInfo[index2].cost = POISONMETRIC;
+				routing_table.RInfo[index2].cost = POISONMETRIC; // exist one round
 				routing_table.RInfo[index2].updateflag = true;
+				
 				#else
-
 				retval = deRouter_table(&routing_table, router_info.link_info[i].LinkToID);
 				if (retval == -1) {
 					retval = 0;
