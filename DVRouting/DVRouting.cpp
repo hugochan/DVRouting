@@ -359,7 +359,7 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 					}
 				}
 
-				else
+				if (recv_router_msg->type != 1)
 				{
 					// update keepalive time
 					index = lookupLinkInfoArray(router_info.link_info, router_info.link_info_count, recv_router_msg->ID);
@@ -409,7 +409,6 @@ DWORD WINAPI DVRouting::router_proc(thread_arg my_arg)
 		for (i = 0; i < router_info.link_info_count; i++)
 		{
 			if (clock() - router_info.link_info[i].keepalive_time > keepalive_timeout)
-			//if (false)
 			{
 
 				// update routing table
