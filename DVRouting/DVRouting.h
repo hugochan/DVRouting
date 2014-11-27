@@ -51,6 +51,7 @@ private:
 		char update_link_ID[10];
 	}UpdateFlag;
 	UpdateFlag update_flag;
+	bool poison_reverse_notif_flag;
 
 	char display_flag[10];
 
