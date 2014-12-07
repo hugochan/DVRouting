@@ -89,5 +89,5 @@ Triggered update and poison reverse features are incorporated.
 </ul>
 
 <h3>
-	<p>5. Screenshot</p></h3>
+<a name="Screenshot" class="anchor" href="#Screenshot"><span class="octicon octicon-link"></span></a>5. Screenshot</h3>
 &nbsp;&nbsp;&nbsp;&nbsp;<img src="./image/5Router.jpg" height="300" width="500" alt="Screenshot"></img>
