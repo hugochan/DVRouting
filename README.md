@@ -1,18 +1,3 @@
-<h3>
-<center>=====================================================================</center>
-<br>                                                                       
-                              <center>======</center><br>                                   
-                              <center>README</center><br>                                   
-                              <center>======</><br>                                   
-                                    <br>                                   
-                             <center>DVRouting 1.0</center><br>
-                             <center>26 Nov. 2014</center><br>
-                             <center>author: Hugo Chan</center><br>
-                          <br>
-                      <center>C++ Programs for Socket Programming</center><br> 
-                 																			       <br>                                       
-<center>=====================================================================</center><br>
-</h3>
 
 <h3>
 <a name="Contents" class="anchor" href="#Contents"><span class="octicon octicon-link"></span></a>Contents</h3>
